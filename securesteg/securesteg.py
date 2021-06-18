@@ -1,14 +1,20 @@
 from PIL import Image
 from getmac import get_mac_address as gma
 import hashlib
+from bitstring import ConstBitStream
 
 
-def get_bits(header_length_bits, header_length, header, data_length_bits, data_length, data) -> list[int]:
+def get_bits(header_length_bits, header_length, header, data_length_bits, data_length, data, is_file=False) -> list[int]:
 	bits = []
 	for bit in header_length_bits + data_length_bits + header_length + data_length:
 		bits.append(int(bit))
-	for c in header + data:
+	for c in header:
 		bits.extend(map(int, [i for i in format(ord(c), "08b")]))
+	if is_file:
+		bits.extend(data)
+	else:
+		for c in data:
+			bits.extend(map(int, [i for i in format(ord(c), "08b")]))
 	return bits
 
 
@@ -48,19 +54,23 @@ def caesar_cipher(message: str, n: int) -> str:
 	return result
 
 
-def get_metadata(metadata: str) -> (str, str):
-	if len(metadata) == 0:
+def get_metadata(metadata, is_file=False) -> (str, str):
+	n = len(metadata) * (1 if is_file else 8)
+	if n == 0:
 		length_bits = "000"
 		length = ""
-	elif len(metadata) * 8 < 256:
+	elif n < 256:
 		length_bits = "001"
-		length = bin(len(metadata) * 8).replace("0b", "").zfill(8)
-	elif len(metadata) * 8 < 65536:
+		length = bin(n).replace("0b", "").zfill(8)
+	elif n < 65536:
 		length_bits = "010"
-		length = bin(len(metadata) * 8).replace("0b", "").zfill(16)
-	else:
+		length = bin(n).replace("0b", "").zfill(16)
+	elif n < 4294967296:
 		length_bits = "011"
-		length = bin(len(metadata) * 8).replace("0b", "").zfill(32)
+		length = bin(n).replace("0b", "").zfill(32)
+	else:
+		length_bits = "100"
+		length = bin(n).replace("0b", "").zfill(64)
 	return length, length_bits
 
 
@@ -79,11 +89,24 @@ def get_length(pixel):
 	return length
 
 
+def create_file(target_bits, file_name):
+	output = "".join(map(str, target_bits))
+	i = 0
+	buffer = bytearray()
+	while i < len(output):
+		buffer.append(int(output[i:i + 8], 2))
+		i += 8
+	with open(file_name, 'bw') as file:
+		file.write(buffer)
+
+
 class SecureSteganography:
 	def __init__(self, image_path: str):
 		self.image_path = image_path
 		self.header = {}
+		self.is_file = None
 		self.data = None
+		self.file = []
 		self.image = None
 
 	def secure(self, **kwargs) -> None:
@@ -97,11 +120,18 @@ class SecureSteganography:
 			hashed_password = hashlib.sha3_256(password.encode()).hexdigest()
 			self.header['password'] = hashed_password
 
-	def set_data(self, data: str) -> None:
-		self.data = data
+	def set_data(self, data: str, is_file=False, save_name=None) -> None:
+		self.is_file = is_file
+		self.header["is_file"] = is_file
+		if not is_file:
+			self.data = data
+		else:
+			file = ConstBitStream(filename=data)
+			self.header['file_name'] = save_name or data
+			self.file = list(map(int, file.bin))
 
 	def encode(self) -> None:
-		if self.data is None:
+		if self.data is None and self.file is None:
 			raise Exception("No Data to Encode. Call set_data method to add data")
 		image = Image.open(self.image_path, "r")
 		header = ""
@@ -109,13 +139,22 @@ class SecureSteganography:
 			header += key + ":" + str(self.header[key]) + "\n"
 
 		header_length, header_length_bits = get_metadata(header)
-		data_length, data_length_bits = get_metadata(self.data)
+		if self.is_file:
+			data_length, data_length_bits = get_metadata(self.file, True)
+		else:
+			data_length, data_length_bits = get_metadata(self.data)
 
-		total_size = 3 + len(header_length) + (len(header) * 8) + 3 + len(data_length) + (len(self.data) * 8)
+		if self.is_file:
+			total_size = 3 + len(header_length) + (len(header) * 8) + 3 + len(data_length) + (len(self.file))
+		else:
+			total_size = 3 + len(header_length) + (len(header) * 8) + 3 + len(data_length) + (len(self.data) * 8)
 		if total_size > (image.size[0] * image.size[1]) * 3:
 			raise Exception("Message is too long for this image.")
 		k = 0
-		bits = get_bits(header_length_bits, header_length, header, data_length_bits, data_length, self.data)
+		if self.is_file:
+			bits = get_bits(header_length_bits, header_length, header, data_length_bits, data_length, self.file, True)
+		else:
+			bits = get_bits(header_length_bits, header_length, header, data_length_bits, data_length, self.data)
 		done = False
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
@@ -155,6 +194,8 @@ class SecureSteganography:
 		self.image.close()
 
 	def encrypt(self, **kwargs) -> None:
+		if self.is_file:
+			raise Exception("Cannot Further encrypt files. Encryption possible with string data")
 		if self.data is None:
 			raise Exception("Data not present to encrypt. Call object.set_data(data) method")
 		if kwargs.get("encrypt", None) == 'caesar':
@@ -213,6 +254,9 @@ class SecureSteganography:
 				if length_check and len(bits) > 6 + header_length_size + data_length_size + header_length + data_length:
 					pre_length = 6 + header_length_size + data_length_size + header_length
 					target_bits = bits[pre_length:pre_length + data_length]
+					if bool(self.header["is_file"]):
+						create_file(target_bits, kwargs.get('save_path', None) or self.header["file_name"])
+						return f"File extracted from image is stored at {kwargs.get('save_path', None) or self.header['file_name']}"
 					message = get_message(target_bits)
 					self.decrypt(message)
 					return self.data

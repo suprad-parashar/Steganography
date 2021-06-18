@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
-VERSION = '0.0.1'
+VERSION = '0.1.0'
 DESCRIPTION = 'Simple Steganography with Added Security'
-LONG_DESCRIPTION = 'A package that allows to hide data in images with added security such as Passwords, Encryption and MAC Addresses.'
+LONG_DESCRIPTION = 'A package that allows to hide data and files in images with added security such as Passwords, Encryption and MAC Addresses.'
 
 # Setting up
 setup(
@@ -13,7 +13,7 @@ setup(
 	description=DESCRIPTION,
 	long_description_content_type="text/markdown",
 	packages=find_packages(),
-	install_requires=['pillow', 'getmac'],
+	install_requires=['pillow', 'getmac', 'bitstring'],
 	keywords=['python', 'image', 'data', 'hiding', 'steganography', 'secure'],
 	classifiers=[
 		"Development Status :: 1 - Planning",
