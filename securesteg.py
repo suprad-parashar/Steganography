@@ -1,5 +1,7 @@
 from PIL import Image
 from getmac import get_mac_address as gma
+import hashlib
+
 
 class SecureSteganography:
 	def __init__(self, image_path: str):
@@ -8,7 +10,8 @@ class SecureSteganography:
 		self.data = None
 		self.image = None
 
-	def get_bits(self, lone_bits: list, data: str) -> list:
+	@staticmethod
+	def get_bits(lone_bits: str, data: str) -> list[int]:
 		bits = []
 		for bit in lone_bits:
 			bits.append(int(bit))
@@ -16,15 +19,21 @@ class SecureSteganography:
 			bits.extend(map(int, [i for i in format(ord(c), "08b")]))
 		return bits
 
-	def secure(self, **kwargs):
-		if kwargs.get("security", None) == 'mac':
+	def secure(self, **kwargs) -> None:
+		security = kwargs.get('security', None)
+		if security == 'mac':
 			self.header['security'] = 'mac'
 			self.header['target'] = kwargs['target'].upper()
+		elif security == 'password':
+			self.header['security'] = 'password'
+			password = kwargs['password']
+			hashed_password = hashlib.sha3_256(password.encode()).hexdigest()
+			self.header['password'] = hashed_password
 
-	def set_data(self, data):
+	def set_data(self, data: str) -> None:
 		self.data = data
 
-	def encode(self):
+	def encode(self) -> None:
 		image = Image.open(self.image_path, "r")
 		header = ""
 		for key in self.header.keys():
@@ -77,13 +86,15 @@ class SecureSteganography:
 			if done:
 				break
 		self.image = image
-	def save(self, save_path):
+
+	def save(self, save_path: str) -> None:
 		if self.image is None:
 			return
 		self.image.save(save_path)
 		self.image.close()
 
-	def get_message(self, bits):
+	@staticmethod
+	def get_message(bits: list[int]) -> str:
 		k = 0
 		message = ""
 		while k < len(bits):
@@ -94,8 +105,8 @@ class SecureSteganography:
 			k += 8
 		return message
 
-	def encrypt(self, **kwargs):
-		if self.data == None:
+	def encrypt(self, **kwargs) -> None:
+		if self.data is None:
 			raise Exception("Data not present to encrypt. Call object.set_data(data) method")
 		if kwargs.get("encrypt", None) == 'caesar':
 			n = kwargs.get("n", 0)
@@ -105,15 +116,15 @@ class SecureSteganography:
 				result = ""
 				for i in range(len(self.data)):
 					char = self.data[i]
-					if (char.isupper()):
+					if char.isupper():
 						result += chr((ord(char) + n - 65) % 26 + 65)
 					elif char.islower():
 						result += chr((ord(char) + n - 97) % 26 + 97)
 					else:
 						result += char
 				self.data = result
-	
-	def get_header(self, bits):
+
+	def get_header(self, bits: list[int]) -> dict:
 		header_data = self.get_message(bits)
 		header = {}
 		for line in header_data.strip().split("\n"):
@@ -121,25 +132,31 @@ class SecureSteganography:
 			header[key] = value
 		return header
 
-	def check_security_access(self):
+	def check_security_access(self) -> (bool, str):
 		try:
-			if self.header.get("security", None) == 'mac':
+			security = self.header.get("security", None)
+			if security == 'mac':
 				current_mac = gma().upper()
 				if self.header["target"] == current_mac or self.header["target"] == "FF:FF:FF:FF:FF:FF":
 					return True, ""
 				else:
 					return False, "Message Not Intended for you"
+			elif security == 'password':
+				password = input("Enter Password: ")
+				hashed_password = hashlib.sha3_256(password.encode()).hexdigest()
+				return (True, "") if self.header['password'] == hashed_password else (False, "Wrong Password")
+
 			return True, ""
-		except:
+		except KeyError:
 			return False, "Missing Data in Image"
 
-	def decrypt(self, message):
+	def decrypt(self, message: str) -> None:
 		if self.header.get('encrypt', None) == 'caesar':
 			result = ""
 			n = 26 - int(self.header['n'])
 			for i in range(len(message)):
 				char = message[i]
-				if (char.isupper()):
+				if char.isupper():
 					result += chr((ord(char) + n - 65) % 26 + 65)
 				elif char.islower():
 					result += chr((ord(char) + n - 97) % 26 + 97)
@@ -147,7 +164,7 @@ class SecureSteganography:
 					result += char
 			self.data = result
 
-	def decode(self):
+	def decode(self) -> str:
 		image = Image.open(self.image_path, "r")
 		bits = []
 		flag = False
@@ -164,6 +181,8 @@ class SecureSteganography:
 			header_length_check = 16
 		elif header_length_bits == "011":
 			header_length_check = 32
+		else:
+			header_length_check = -1
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
 				pixel = image.getpixel((i, j))
