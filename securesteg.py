@@ -3,11 +3,11 @@ from getmac import get_mac_address as gma
 import hashlib
 
 
-def get_bits(lone_bits: str, data: str) -> list[int]:
+def get_bits(header_length_bits, header_length, header, data_length_bits, data_length, data) -> list[int]:
 	bits = []
-	for bit in lone_bits:
+	for bit in header_length_bits + data_length_bits + header_length + data_length:
 		bits.append(int(bit))
-	for c in data:
+	for c in header + data:
 		bits.extend(map(int, [i for i in format(ord(c), "08b")]))
 	return bits
 
@@ -48,6 +48,37 @@ def caesar_cipher(message: str, n: int) -> str:
 	return result
 
 
+def get_metadata(metadata: str) -> (str, str):
+	if len(metadata) == 0:
+		length_bits = "000"
+		length = ""
+	elif len(metadata) * 8 < 256:
+		length_bits = "001"
+		length = bin(len(metadata) * 8).replace("0b", "").zfill(8)
+	elif len(metadata) * 8 < 65536:
+		length_bits = "010"
+		length = bin(len(metadata) * 8).replace("0b", "").zfill(16)
+	else:
+		length_bits = "011"
+		length = bin(len(metadata) * 8).replace("0b", "").zfill(32)
+	return length, length_bits
+
+
+def get_length(pixel):
+	length_bits = "".join(map(str, [pixel[0] % 2, pixel[1] % 2, pixel[2] % 2]))
+	if length_bits == "000":
+		length = 0
+	elif length_bits == "001":
+		length = 8
+	elif length_bits == "010":
+		length = 16
+	elif length_bits == "011":
+		length = 32
+	else:
+		length = -1
+	return length
+
+
 class SecureSteganography:
 	def __init__(self, image_path: str):
 		self.image_path = image_path
@@ -70,27 +101,21 @@ class SecureSteganography:
 		self.data = data
 
 	def encode(self) -> None:
+		if self.data is None:
+			raise Exception("No Data to Encode. Call set_data method to add data")
 		image = Image.open(self.image_path, "r")
 		header = ""
 		for key in self.header.keys():
 			header += key + ":" + str(self.header[key]) + "\n"
-		if len(header) == 0:
-			header_length_bits = "000"
-			header_length = ""
-		elif len(header) * 8 < 256:
-			header_length_bits = "001"
-			header_length = bin(len(header) * 8).replace("0b", "").zfill(8)
-		elif len(header) * 8 < 65536:
-			header_length_bits = "010"
-			header_length = bin(len(header) * 8).replace("0b", "").zfill(16)
-		else:
-			header_length_bits = "011"
-			header_length = bin(len(header) * 8).replace("0b", "").zfill(32)
-		message = header + self.data + "$"
-		if 3 + len(header_length) + (len(message) * 8) > (image.size[0] * image.size[1]) * 3:
+
+		header_length, header_length_bits = get_metadata(header)
+		data_length, data_length_bits = get_metadata(self.data)
+
+		total_size = 3 + len(header_length) + (len(header) * 8) + 3 + len(data_length) + (len(self.data) * 8)
+		if total_size > (image.size[0] * image.size[1]) * 3:
 			raise Exception("Message is too long for this image.")
 		k = 0
-		bits = get_bits(header_length_bits + header_length, message)
+		bits = get_bits(header_length_bits, header_length, header, data_length_bits, data_length, self.data)
 		done = False
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
@@ -139,8 +164,7 @@ class SecureSteganography:
 				self.header['n'] = n
 				self.data = caesar_cipher(self.data, n)
 
-	def check_security_access(self) -> (bool, str):
-
+	def check_security_access(self, kwargs) -> (bool, str):
 		try:
 			security = self.header.get("security", None)
 			if security == 'mac':
@@ -151,7 +175,9 @@ class SecureSteganography:
 				else:
 					return False, "Message Not Intended for you"
 			elif security == 'password':
-				password = input("Enter Password: ")
+				password = kwargs.get('password', None)
+				if password is None:
+					return False, "Password not provided"
 				hashed_password = hashlib.sha3_256(password.encode()).hexdigest()
 
 				return (True, "") if self.header['password'] == hashed_password else (False, "Wrong Password")
@@ -167,52 +193,45 @@ class SecureSteganography:
 			n = -int(self.header['n'])
 			self.data = caesar_cipher(message, n)
 
-	def decode(self) -> str:
+	def decode(self, **kwargs) -> str:
 		image = Image.open(self.image_path, "r")
 		bits = []
-		flag = False
-		check = False
-		length_check = False
+		header_check = False
 		header_length = 0
-		pix = image.getpixel((0, 0))
-		header_length_bits = "".join(map(str, [pix[0] % 2, pix[1] % 2, pix[2] % 2]))
-		if header_length_bits == "000":
-			header_length_check = 0
-		elif header_length_bits == "001":
-			header_length_check = 8
-		elif header_length_bits == "010":
-			header_length_check = 16
-		elif header_length_bits == "011":
-			header_length_check = 32
-		else:
-			header_length_check = -1
+		data_length = 0
+		header_length_size = get_length(image.getpixel((0, 0)))
+		data_length_size = get_length(image.getpixel((0, 1)))
+		if data_length_size <= 0 or header_length == -1:
+			return "No Data present in the image"
+		length_check = False
 
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
 				pixel = image.getpixel((i, j))
 				for k in range(3):
 					bits.append(pixel[k] % 2)
-				if not check and header_length_check != 0:
-
-					if not length_check and len(bits) >= (3 + header_length_check):
-						length_check = True
-						header_length = int("".join(map(str, bits[3:3 + header_length_check])), 2)
-
-					if length_check and not check and len(bits) >= 3 + header_length_check + header_length:
-						check = True
-						flag = True
-			if flag:
-				target_bits = bits[3 + header_length_check:3 + header_length_check + header_length]
-				self.header = get_header(target_bits)
-
-				access_granted, security_message = self.check_security_access()
-
-				if access_granted:
-					check = True
-					flag = False
-				else:
-					return security_message
-		message = get_message(bits[3 + header_length_check + header_length:])
-
-		self.decrypt(message)
-		return self.data
+				if length_check and len(bits) > 6 + header_length_size + data_length_size + header_length + data_length:
+					pre_length = 6 + header_length_size + data_length_size + header_length
+					target_bits = bits[pre_length:pre_length + data_length]
+					message = get_message(target_bits)
+					self.decrypt(message)
+					return self.data
+				elif not header_check and length_check and len(bits) > 6 + header_length_size + data_length_size + header_length:
+					if header_length != 0:
+						pre_length = 6 + header_length_size + data_length_size
+						target_bits = bits[pre_length:pre_length + header_length]
+						self.header = get_header(target_bits)
+						access_granted, security_message = self.check_security_access(kwargs)
+						if not access_granted:
+							return security_message
+					header_check = True
+				elif not length_check and len(bits) > 6 + header_length_size + data_length_size:
+					pre_length = 6 + header_length_size
+					data_length = int("".join(map(str, bits[pre_length:pre_length + data_length_size])), 2)
+					length_check = True
+				elif not length_check and len(bits) > 6 + header_length_size:
+					pre_length = 6
+					try:
+						header_length = int("".join(map(str, bits[pre_length:pre_length + header_length_size])), 2)
+					except ValueError:
+						header_length = 0
