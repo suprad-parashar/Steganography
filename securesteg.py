@@ -3,21 +3,57 @@ from getmac import get_mac_address as gma
 import hashlib
 
 
+def get_bits(lone_bits: str, data: str) -> list[int]:
+	bits = []
+	for bit in lone_bits:
+		bits.append(int(bit))
+	for c in data:
+		bits.extend(map(int, [i for i in format(ord(c), "08b")]))
+	return bits
+
+
+def get_message(bits: list[int]) -> str:
+	k = 0
+	message = ""
+	while k < len(bits):
+		letter = chr(int("".join(map(str, bits[k:k + 8])), 2))
+		if letter == '$':
+			break
+		message += letter
+		k += 8
+	return message
+
+
+def get_header(bits: list[int]) -> dict:
+	header_data = get_message(bits)
+	header = {}
+	for line in header_data.strip().split("\n"):
+		key, value = line.split(":", 1)
+		header[key] = value
+	return header
+
+
+def caesar_cipher(message: str, n: int) -> str:
+	result = ""
+	for i in range(len(message)):
+		char = message[i]
+		if char.isupper():
+			result += chr((ord(char) + n - 65) % 26 + 65)
+		elif char.islower():
+			result += chr((ord(char) + n - 97) % 26 + 97)
+		elif char.isdigit():
+			result += chr((ord(char) + n - 48) % 10 + 48)
+		else:
+			result += char
+	return result
+
+
 class SecureSteganography:
 	def __init__(self, image_path: str):
 		self.image_path = image_path
 		self.header = {}
 		self.data = None
 		self.image = None
-
-	@staticmethod
-	def get_bits(lone_bits: str, data: str) -> list[int]:
-		bits = []
-		for bit in lone_bits:
-			bits.append(int(bit))
-		for c in data:
-			bits.extend(map(int, [i for i in format(ord(c), "08b")]))
-		return bits
 
 	def secure(self, **kwargs) -> None:
 		security = kwargs.get('security', None)
@@ -54,7 +90,7 @@ class SecureSteganography:
 		if 3 + len(header_length) + (len(message) * 8) > (image.size[0] * image.size[1]) * 3:
 			raise Exception("Message is too long for this image.")
 		k = 0
-		bits = self.get_bits(header_length_bits + header_length, message)
+		bits = get_bits(header_length_bits + header_length, message)
 		done = False
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
@@ -93,18 +129,6 @@ class SecureSteganography:
 		self.image.save(save_path)
 		self.image.close()
 
-	@staticmethod
-	def get_message(bits: list[int]) -> str:
-		k = 0
-		message = ""
-		while k < len(bits):
-			letter = chr(int("".join(map(str, bits[k:k + 8])), 2))
-			if letter == '$':
-				break
-			message += letter
-			k += 8
-		return message
-
 	def encrypt(self, **kwargs) -> None:
 		if self.data is None:
 			raise Exception("Data not present to encrypt. Call object.set_data(data) method")
@@ -112,31 +136,16 @@ class SecureSteganography:
 			n = kwargs.get("n", 0)
 			if n != 0:
 				self.header['encrypt'] = 'caesar'
-				self.header['n'] = kwargs.get("n", 0)
-				result = ""
-				for i in range(len(self.data)):
-					char = self.data[i]
-					if char.isupper():
-						result += chr((ord(char) + n - 65) % 26 + 65)
-					elif char.islower():
-						result += chr((ord(char) + n - 97) % 26 + 97)
-					else:
-						result += char
-				self.data = result
-
-	def get_header(self, bits: list[int]) -> dict:
-		header_data = self.get_message(bits)
-		header = {}
-		for line in header_data.strip().split("\n"):
-			key, value = line.split(":", 1)
-			header[key] = value
-		return header
+				self.header['n'] = n
+				self.data = caesar_cipher(self.data, n)
 
 	def check_security_access(self) -> (bool, str):
+
 		try:
 			security = self.header.get("security", None)
 			if security == 'mac':
 				current_mac = gma().upper()
+
 				if self.header["target"] == current_mac or self.header["target"] == "FF:FF:FF:FF:FF:FF":
 					return True, ""
 				else:
@@ -144,6 +153,7 @@ class SecureSteganography:
 			elif security == 'password':
 				password = input("Enter Password: ")
 				hashed_password = hashlib.sha3_256(password.encode()).hexdigest()
+
 				return (True, "") if self.header['password'] == hashed_password else (False, "Wrong Password")
 
 			return True, ""
@@ -151,18 +161,11 @@ class SecureSteganography:
 			return False, "Missing Data in Image"
 
 	def decrypt(self, message: str) -> None:
-		if self.header.get('encrypt', None) == 'caesar':
-			result = ""
-			n = 26 - int(self.header['n'])
-			for i in range(len(message)):
-				char = message[i]
-				if char.isupper():
-					result += chr((ord(char) + n - 65) % 26 + 65)
-				elif char.islower():
-					result += chr((ord(char) + n - 97) % 26 + 97)
-				else:
-					result += char
-			self.data = result
+		self.data = message
+		encrypt = self.header.get('encrypt', None)
+		if encrypt == 'caesar':
+			n = -int(self.header['n'])
+			self.data = caesar_cipher(message, n)
 
 	def decode(self) -> str:
 		image = Image.open(self.image_path, "r")
@@ -183,27 +186,33 @@ class SecureSteganography:
 			header_length_check = 32
 		else:
 			header_length_check = -1
+
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
 				pixel = image.getpixel((i, j))
 				for k in range(3):
 					bits.append(pixel[k] % 2)
 				if not check and header_length_check != 0:
+
 					if not length_check and len(bits) >= (3 + header_length_check):
 						length_check = True
 						header_length = int("".join(map(str, bits[3:3 + header_length_check])), 2)
+
 					if length_check and not check and len(bits) >= 3 + header_length_check + header_length:
 						check = True
 						flag = True
 			if flag:
 				target_bits = bits[3 + header_length_check:3 + header_length_check + header_length]
-				self.header = self.get_header(target_bits)
+				self.header = get_header(target_bits)
+
 				access_granted, security_message = self.check_security_access()
+
 				if access_granted:
 					check = True
 					flag = False
 				else:
 					return security_message
-		message = self.get_message(bits[3 + header_length_check + header_length:])
+		message = get_message(bits[3 + header_length_check + header_length:])
+
 		self.decrypt(message)
 		return self.data
