@@ -19,12 +19,25 @@ pip install securesteg
 import securesteg as ss
 ```
 
-### 2. Create an instance of SecureSteganography and set the data
+### 2. Create an instance of SecureSteganography
 
 ```python
-data = "A quick brown fox jumps over the lazy dog."
 image = ss.SecureSteganography(IMAGE_PATH)
-image.set_data(data)
+```
+
+### 3. Set Data
+
+The data to hide can be a file or a string.
+
+```python
+# For Text Data
+message = "A quick brown fox jumps over the lazy dog.
+image.set_data(message)
+
+# For Files
+image.set_data(FILE_PATH, True) # The extracted file will be saved with the same name and path of the FILE_PATH
+# or
+image.set_data(FILE_PATH, True, SAVE_PATH) # The extracted file will be saved with the name and path as given in SAVE_PATH
 ```
 
 ### 4. Add Security
@@ -70,4 +83,7 @@ print(f"Decoded Message: {message}")
 # Pass in additional parameters such as passwords as args
 message = image.decode(password='SecurePassword')
 print(f"Decoded Message: {message}")
+
+# Pass in custom save_path in decode for extracting and saving files from the image.
+message = image.decode(save_path="C:/Downloads")
 ```
