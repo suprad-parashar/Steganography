@@ -1,8 +1,15 @@
+"""
+Main file of the Securesteg library.
+"""
+
+
 from PIL import Image
 from getmac import get_mac_address as gma
 import hashlib
 from bitstring import ConstBitStream
 from typing import Union
+
+from securesteg import encryption
 
 
 def get_bits(header_length_bits: str, header_length: str, header: str, data_length_bits: str, data_length: str, data: Union[list[int], str], is_file: bool = False) -> list[int]:
@@ -87,35 +94,6 @@ def get_header(bits: list[int]) -> dict:
 
 	# Return the header dictionary.
 	return header
-
-
-def caesar_cipher(message: str, n: int) -> str:
-	"""
-	Encrypts the message using caesar cipher.
-
-	@:param message -> The message to be encrypted.
-	@:n -> The amount of places the message has to be shifted.
-
-	@:return -> Encrypted Message.
-	"""
-
-	# Initialise Result string list.
-	result = []
-
-	# Shift each character in the message.
-	for index in range(len(message)):
-		char = message[index]
-		if char.isupper():
-			result.append(chr((ord(char) + n - 65) % 26 + 65))
-		elif char.islower():
-			result.append(chr((ord(char) + n - 97) % 26 + 97))
-		elif char.isdigit():
-			result.append(chr((ord(char) + n - 48) % 10 + 48))
-		else:
-			result.append(char)
-
-	# Return the Cipher Text.
-	return "".join(result)
 
 
 def get_metadata(metadata: Union[str, list[int]], is_file: bool = False) -> (str, str):
@@ -328,6 +306,7 @@ class SecureSteganography:
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
 				if bits_written < len(bits):
+					# Get the next 3 bits.
 					try:
 						a = bits[bits_written]
 					except IndexError:
@@ -341,6 +320,7 @@ class SecureSteganography:
 					except IndexError:
 						c = 0
 
+					# Encode the bits to each individual channel of the pixel.
 					p1, p2, p3 = image.getpixel((i, j))
 					if p1 % 2 != a:
 						p1 += (-1 if p1 == 255 else 1)
@@ -349,6 +329,7 @@ class SecureSteganography:
 					if p3 % 2 != c:
 						p3 += (-1 if p3 == 255 else 1)
 
+					# Set the pixel.
 					image.putpixel((i, j), (p1, p2, p3))
 					bits_written += 3
 				else:
@@ -361,26 +342,50 @@ class SecureSteganography:
 		self.image = image
 
 	def save(self, save_path: str) -> None:
+		"""
+		Saves the encoded image into secret image.
+
+		:param save_path: The name and path to save the secret image.
+		"""
+
 		if self.image is None:
 			return
 		self.image.save(save_path)
 		self.image.close()
 
 	def encrypt(self, **kwargs) -> None:
+		"""
+		Encrypts the data (string message).
+
+		:param kwargs: Keyword Arguments.
+		"""
+
+		# Handle Exceptions.
 		if self.is_file:
 			raise Exception("Cannot Further encrypt files. Encryption possible with string data")
 		if self.data is None:
 			raise Exception("Data not present to encrypt. Call object.set_data(data) method")
+
+		# Caesar Cipher Encryption.
 		if kwargs.get("encrypt", None) == 'caesar':
 			n = kwargs.get("n", 0)
 			if n != 0:
 				self.header['encrypt'] = 'caesar'
 				self.header['n'] = n
-				self.data = caesar_cipher(self.data, n)
+				self.data = encryption.caesar_cipher(self.data, n)
 
 	def check_security_access(self, kwargs) -> (bool, str):
+		"""
+		Check if the user has the permissions to access and decode the hidden data.
+
+		:param kwargs: Keyword Arguments
+		:return: A boolean which is True if access is granted else False. A error message if any.
+		"""
+
 		try:
 			security = self.header.get("security", None)
+
+			# MAC Address Security.
 			if security == 'mac':
 				current_mac = gma().upper()
 
@@ -388,6 +393,8 @@ class SecureSteganography:
 					return True, ""
 				else:
 					return False, "Message Not Intended for you"
+
+			# Password Security.
 			elif security == 'password':
 				password = kwargs.get('password', None)
 				if password is None:
@@ -401,29 +408,52 @@ class SecureSteganography:
 			return False, "Missing Data in Image"
 
 	def decrypt(self, message: str) -> None:
+		"""
+		Decrypts the message from CipherText to plaintext.
+
+		:param message: The CipherText.
+		"""
+
 		self.data = message
 		encrypt = self.header.get('encrypt', None)
+
+		# Caesar Encryption.
 		if encrypt == 'caesar':
 			n = -int(self.header['n'])
-			self.data = caesar_cipher(message, n)
+			self.data = encryption.caesar_cipher(message, n)
 
 	def decode(self, **kwargs) -> str:
+		"""
+		Decodes the hidden message from the image.
+
+		:param kwargs: Keyword Arguments.
+		:return: The string message of the hidden data.
+		"""
+
+		# Open image and initialise variables.
 		image = Image.open(self.image_path, "r")
 		bits = []
 		header_check = False
 		header_length = 0
 		data_length = 0
+
+		# Get the data header length codes.
 		header_length_size = get_length(image.getpixel((0, 0)))
 		data_length_size = get_length(image.getpixel((0, 1)))
+
+		# Validation Check.
 		if data_length_size <= 0 or header_length == -1:
 			return "No Data present in the image"
 		length_check = False
 
+		# Decode the data.
 		for i in range(image.size[0]):
 			for j in range(image.size[1]):
 				pixel = image.getpixel((i, j))
 				for k in range(3):
 					bits.append(pixel[k] % 2)
+
+				# Get the file or message from the image.
 				if length_check and len(bits) > 6 + header_length_size + data_length_size + header_length + data_length:
 					pre_length = 6 + header_length_size + data_length_size + header_length
 					target_bits = bits[pre_length:pre_length + data_length]
@@ -433,6 +463,8 @@ class SecureSteganography:
 					message = get_message(target_bits)
 					self.decrypt(message)
 					return self.data
+
+				# Get the header from the image.
 				elif not header_check and length_check and len(
 						bits) > 6 + header_length_size + data_length_size + header_length:
 					if header_length != 0:
@@ -443,10 +475,14 @@ class SecureSteganography:
 						if not access_granted:
 							return security_message
 					header_check = True
+
+				# Get the length and other metadata from the image.
 				elif not length_check and len(bits) > 6 + header_length_size + data_length_size:
 					pre_length = 6 + header_length_size
 					data_length = int("".join(map(str, bits[pre_length:pre_length + data_length_size])), 2)
 					length_check = True
+
+				# Get the length of the metadata of the image.
 				elif not length_check and len(bits) > 6 + header_length_size:
 					pre_length = 6
 					try:
